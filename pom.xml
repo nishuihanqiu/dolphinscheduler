@@ -275,6 +275,11 @@
             </dependency>
             <dependency>
                 <groupId>org.apache.dolphinscheduler</groupId>
+                <artifactId>dolphinscheduler-prometheus</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.dolphinscheduler</groupId>
                 <artifactId>dolphinscheduler-python</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -1143,5 +1148,6 @@
         <module>dolphinscheduler-standalone-server</module>
         <module>dolphinscheduler-datasource-plugin</module>
         <module>dolphinscheduler-python</module>
+        <module>dolphinscheduler-prometheus</module>
     </modules>
 </project>
