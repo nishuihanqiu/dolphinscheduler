@@ -86,6 +86,14 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
   }
 
+  public void deleteNode(Node node) {
+    lock.writeLock().lock();
+    try {
+      nodesMap.remove(node);
+    } finally {
+      lock.writeLock().unlock();
+    }
+  }
 
   /**
    * add edge
@@ -141,6 +149,29 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
       lock.writeLock().unlock();
     }
 
+  }
+
+  public void deleteEdge(Node fromNode, Node toNode) {
+    lock.writeLock().lock();
+    try {
+      Map<Node, EdgeInfo> nodeEdgeInfoMap = edgesMap.get(fromNode);
+      if (nodeEdgeInfoMap != null) {
+        nodeEdgeInfoMap.remove(toNode);
+        if (nodeEdgeInfoMap.isEmpty()) {
+          edgesMap.remove(fromNode);
+        }
+      }
+
+      Map<Node, EdgeInfo> reverseMap = reverseEdgesMap.get(toNode);
+      if (reverseMap != null) {
+        reverseMap.remove(fromNode);
+        if (reverseMap.isEmpty()) {
+          reverseEdgesMap.remove(toNode);
+        }
+      }
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 
 

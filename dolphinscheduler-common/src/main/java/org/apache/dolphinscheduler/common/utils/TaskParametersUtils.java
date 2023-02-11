@@ -34,6 +34,7 @@ import org.apache.dolphinscheduler.common.task.subprocess.SubProcessParameters;
 import org.apache.dolphinscheduler.common.task.switchtask.SwitchParameters;
 import org.apache.dolphinscheduler.common.task.tis.PigeonCommonParameters;
 
+import org.apache.dolphinscheduler.common.task.waterdrop.SeaTunnelParameters;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,7 +62,7 @@ public class TaskParametersUtils {
                 return JSONUtils.parseObject(parameter, SubProcessParameters.class);
             case "SHELL":
             case "WATERDROP":
-                return JSONUtils.parseObject(parameter, ShellParameters.class);
+                return JSONUtils.parseObject(parameter, SeaTunnelParameters.class);
             case "PROCEDURE":
                 return JSONUtils.parseObject(parameter, ProcedureParameters.class);
             case "SQL":

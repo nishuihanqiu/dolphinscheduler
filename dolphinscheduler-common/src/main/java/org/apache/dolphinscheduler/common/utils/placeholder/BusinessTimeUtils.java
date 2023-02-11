@@ -53,6 +53,7 @@ public class BusinessTimeUtils {
                 if (runTime == null) {
                     return result;
                 }
+                businessDate = addDays(runTime, -1);
                 break;
             case START_PROCESS:
             case START_CURRENT_TASK_PROCESS:
