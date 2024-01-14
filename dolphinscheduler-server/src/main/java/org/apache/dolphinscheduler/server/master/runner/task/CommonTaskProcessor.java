@@ -75,7 +75,7 @@ public class CommonTaskProcessor extends BaseTaskProcessor {
                 processInstance.getProcessDefinitionVersion(),
                 taskInstance.getProcessInstanceId(),
                 taskInstance.getId());
-        Thread.currentThread().setName(String.format(TaskConstants.MASTER_COMMON_TASK_LOGGER_THREAD_NAME_FORMAT, threadLoggerInfoName));
+        Thread.currentThread().setName(String.format(TaskConstants.TASK_LOGGER_THREAD_NAME_FORMAT, threadLoggerInfoName));
     }
 
     @Override

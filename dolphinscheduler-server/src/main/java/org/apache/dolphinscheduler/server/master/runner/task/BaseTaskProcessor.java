@@ -278,7 +278,7 @@ public abstract class BaseTaskProcessor implements ITaskProcessor {
 
         return TaskExecutionContextBuilder.get()
                 .buildTaskInstanceRelatedInfo(taskInstance)
-                .buildTaskDefinitionRelatedInfo(taskInstance.getTaskDefine())
+                .buildTaskDefinitionRelatedInfo(taskInstance)
                 .buildProcessInstanceRelatedInfo(taskInstance.getProcessInstance())
                 .buildProcessDefinitionRelatedInfo(taskInstance.getProcessDefine())
                 .buildSQLTaskRelatedInfo(sqlTaskExecutionContext)
@@ -366,8 +366,10 @@ public abstract class BaseTaskProcessor implements ITaskProcessor {
     private void setSQLTaskRelation(SQLTaskExecutionContext sqlTaskExecutionContext, TaskInstance taskInstance) {
         SqlParameters sqlParameters = JSONUtils.parseObject(taskInstance.getTaskParams(), SqlParameters.class);
         int datasourceId = sqlParameters.getDatasource();
-        DataSource datasource = processService.findDataSourceById(datasourceId);
-        sqlTaskExecutionContext.setConnectionParams(datasource.getConnectionParams());
+        if (datasourceId > 0) {
+            DataSource datasource = processService.findDataSourceById(datasourceId);
+            sqlTaskExecutionContext.setConnectionParams(datasource.getConnectionParams());
+        }
 
         sqlTaskExecutionContext.setDefaultFS(HadoopUtils.getInstance().getDefaultFS());
 

@@ -258,7 +258,7 @@ public class MasterRegistryClient {
      * @param taskInstance task instance
      * @return true if task instance need fail over
      */
-    private boolean checkTaskInstanceNeedFailover(List<Server> workerServers, TaskInstance taskInstance) {
+    public boolean checkTaskInstanceNeedFailover(List<Server> workerServers, TaskInstance taskInstance) {
 
         // first submit: host is null
         // dispatch succeed: host is not null &&  submit_time is null
@@ -267,13 +267,21 @@ public class MasterRegistryClient {
         boolean taskNeedFailover = true;
 
         //now no host will execute this task instance,so no need to failover the task
-        if (taskInstance.getHost() == null) {
+        if (taskInstance == null || taskInstance.getHost() == null) {
             return false;
         }
         // host is not null and submit time is null, master will retry
         if (taskInstance.getSubmitTime() == null) {
             return false;
         }
+
+        if (taskInstance.isSubProcess()
+                || taskInstance.isDependTask()
+                || taskInstance.isConditionsTask()
+                || taskInstance.isSwitchTask()) {
+            return false;
+        }
+
         //if task start after worker starts, there is no need to failover the task.
         if (checkTaskAfterWorkerStart(workerServers, taskInstance)) {
             taskNeedFailover = false;
@@ -329,7 +337,7 @@ public class MasterRegistryClient {
     /**
      * get server startup time
      */
-    private Date getServerStartupTime(List<Server> servers, String host) {
+    public Date getServerStartupTime(List<Server> servers, String host) {
         if (CollectionUtils.isEmpty(servers)) {
             return null;
         }
@@ -463,7 +471,7 @@ public class MasterRegistryClient {
      * 2. change task state from running to need failover.
      * 3. try to notify local master
      */
-    private void failoverTaskInstance(ProcessInstance processInstance, TaskInstance taskInstance) {
+    public void failoverTaskInstance(ProcessInstance processInstance, TaskInstance taskInstance) {
         if (taskInstance == null) {
             logger.error("failover task instance error, taskInstance is null");
             return;
@@ -583,6 +591,10 @@ public class MasterRegistryClient {
      */
     public String getLocalAddress() {
         return NetUtils.getAddr(masterConfig.getListenPort());
+    }
+
+    public List<Server> getWorkerServers() {
+        return registryClient.getServerList(NodeType.WORKER);
     }
 
 }

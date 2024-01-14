@@ -555,6 +555,10 @@ public class ProcessInstance {
         return historyCmd.startsWith(CommandType.COMPLEMENT_DATA.toString());
     }
 
+    public boolean isSubProcessInstance() {
+        return this.getIsSubProcess() == Flag.YES;
+    }
+
     /**
      * get current command type,
      * if start with complement data,return complement

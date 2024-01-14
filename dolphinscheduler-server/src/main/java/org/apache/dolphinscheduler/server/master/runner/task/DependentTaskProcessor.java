@@ -25,17 +25,15 @@ import org.apache.dolphinscheduler.common.enums.TaskTimeoutStrategy;
 import org.apache.dolphinscheduler.common.enums.TaskType;
 import org.apache.dolphinscheduler.common.model.DependentTaskModel;
 import org.apache.dolphinscheduler.common.task.dependent.DependentParameters;
+import org.apache.dolphinscheduler.common.utils.DateUtils;
 import org.apache.dolphinscheduler.common.utils.DependentUtils;
+import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.common.utils.NetUtils;
 import org.apache.dolphinscheduler.dao.entity.TaskDefinition;
 import org.apache.dolphinscheduler.server.utils.DependentExecute;
 import org.apache.dolphinscheduler.server.utils.LogUtils;
 
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 
@@ -69,6 +67,9 @@ public class DependentTaskProcessor extends BaseTaskProcessor {
 
     boolean allDependentItemFinished;
 
+    private long lastDependentTaskLoggingTime = 0L;
+    private static final long LOGGING_INTERVAL_TIME_MILLS = 10 * 60 * 1000;
+
     @Override
     public boolean submitTask() {
         this.taskInstance = processService.submitTask(taskInstance, maxRetryTimes, commitInterval);
@@ -99,9 +100,14 @@ public class DependentTaskProcessor extends BaseTaskProcessor {
 
     @Override
     public boolean runTask() {
+        if (taskInstance.getState().typeIsFinished()) {
+            logger.info("task instance is {}", taskInstance.getState().getDescp());
+            return true;
+        }
         if (!allDependentItemFinished) {
             allDependentItemFinished = allDependentTaskFinish();
         }
+        this.notifyRemoteLogging(allDependentItemFinished);
         if (allDependentItemFinished) {
             getTaskDependResult();
             endTask();
@@ -129,6 +135,12 @@ public class DependentTaskProcessor extends BaseTaskProcessor {
      */
     private void initDependParameters() {
         this.dependentParameters = taskInstance.getDependency();
+        if (dependentParameters == null) {
+            dependentParameters = new DependentParameters();
+        }
+        if (dependentParameters.getDependTaskList() == null) {
+            dependentParameters.setDependTaskList(Collections.emptyList());
+        }
         for (DependentTaskModel taskModel : dependentParameters.getDependTaskList()) {
             this.dependentTaskList.add(new DependentExecute(taskModel.getDependItemList(), taskModel.getRelation()));
         }
@@ -224,5 +236,52 @@ public class DependentTaskProcessor extends BaseTaskProcessor {
     @Override
     public String getType() {
         return TaskType.DEPENDENT.getDesc();
+    }
+
+    private List<DependentTaskModel> getDependentTaskLogging() {
+        List<DependentTaskModel> list = new ArrayList<>();
+        for (DependentExecute dependentExecute : dependentTaskList) {
+            DependentTaskModel model = new DependentTaskModel();
+            model.setDependItemList(dependentExecute.getModelDependentLogging(dependentDate));
+            model.setRelation(dependentExecute.getRelation());
+            list.add(model);
+        }
+        return list;
+    }
+
+    private void notifyRemoteLogging(boolean allDependentItemFinished) {
+        long interval = DateUtils.differMs(new Date(), new Date(lastDependentTaskLoggingTime)); // , lastDependentTaskLoggingTime
+        if (interval < LOGGING_INTERVAL_TIME_MILLS && !allDependentItemFinished) {
+            return;
+        }
+        lastDependentTaskLoggingTime = System.currentTimeMillis();
+        List<DependentTaskModel> dependentTaskModels = this.getDependentTaskLogging();
+        logger.info("------------------------------------------------------------------------");
+        logger.info("-------- check it at every 5 seconds, , print logging at every 10 minutes--------");
+        logger.info("dependent task all check times: {}", DateUtils.dateToString(new Date()));
+        logger.info("dependent task all check date: {}", DateUtils.dateToString(dependentDate));
+        logger.info("task all dependent item finish? result:{}", allDependentItemFinished ? "finished" : "not finished");
+        logger.info("dependent task first submit time: {}", taskInstance.getFirstSubmitTime() != null ?
+                DateUtils.dateToString(taskInstance.getFirstSubmitTime()) : "null");
+        logger.info("dependent task submit time: {}", taskInstance.getSubmitTime() != null ?
+                DateUtils.dateToString(taskInstance.getSubmitTime()) : "null");
+        logger.info("dependent task start time: {}", taskInstance.getStartTime() != null ?
+                DateUtils.dateToString(taskInstance.getStartTime()) : "null");
+        logger.info("dependent task end time: {}", taskInstance.getEndTime() != null ?
+                DateUtils.dateToString(taskInstance.getEndTime()) : "null");
+        logger.info("dependent task instance host: {}", taskInstance.getHost());
+        logger.info("dependent task retry count: {}", taskInstance.getRetryTimes());
+        logger.info("dependent task alert flag: {}", taskInstance.getAlertFlag());
+
+        dependentTaskModels.forEach(item -> {
+            logger.info("task model dependent: | --------------------------->");
+            logger.info("dependent task model dependent item relation: {}", item.getRelation());
+            item.getDependItemList().forEach(it -> {
+                logger.info("dependent task model dependent item -> {}", JSONUtils.toJsonString(it));
+            });
+            logger.info("task model dependent: | <--------------------------------");
+        });
+        logger.info("------------------------------------------------------------------------");
+
     }
 }

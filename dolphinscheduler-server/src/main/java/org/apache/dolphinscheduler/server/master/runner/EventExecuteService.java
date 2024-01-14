@@ -163,7 +163,12 @@ public class EventExecuteService extends Thread {
                 }
 
                 private void notifyMyself(ProcessInstance processInstance, TaskInstance taskInstance) {
-                    logger.info("notify process {} task {} state change", processInstance.getId(), taskInstance.getId());
+                    logger.info("notify process {} task {} state change {} processInstance:{} workflow:{}",
+                            processInstance.getId(),
+                            taskInstance.getId(),
+                            taskInstance.getState().getDescp(),
+                            processInstance.getState().getDescp(),
+                            workflowExecuteThread.getProcessInstance().getState().getDescp());
                     if (!processInstanceExecMaps.containsKey(processInstance.getId())) {
                         return;
                     }
@@ -172,7 +177,7 @@ public class EventExecuteService extends Thread {
                     stateEvent.setTaskInstanceId(taskInstance.getId());
                     stateEvent.setType(StateEventType.TASK_STATE_CHANGE);
                     stateEvent.setProcessInstanceId(processInstance.getId());
-                    stateEvent.setExecutionStatus(ExecutionStatus.RUNNING_EXECUTION);
+                    stateEvent.setExecutionStatus(workflowExecuteThread.getProcessInstance().getState());
                     workflowExecuteThreadNotify.addStateEvent(stateEvent);
                 }
 
@@ -187,9 +192,13 @@ public class EventExecuteService extends Thread {
                     int port = Integer.parseInt(host.split(":")[1]);
                     logger.info("notify process {} task {} state change, host:{}",
                             processInstance.getId(), taskInstance.getId(), host);
+                    ProcessInstance sourceInstance = workflowExecuteThread.getProcessInstance();
                     StateEventChangeCommand stateEventChangeCommand = new StateEventChangeCommand(
-                            processInstanceId, 0, workflowExecuteThread.getProcessInstance().getState(), processInstance.getId(), taskInstance.getId()
-                    );
+                            sourceInstance.getId(),
+                            0,
+                            sourceInstance.getState(),
+                            processInstance.getId(),
+                            taskInstance.getId());
                     stateEventCallbackService.sendResult(address, port, stateEventChangeCommand.convert2Command());
                 }
 

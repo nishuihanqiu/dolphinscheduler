@@ -84,6 +84,10 @@ public enum ExecutionStatus {
         return this == SUCCESS || this == FORCED_SUCCESS;
     }
 
+    public boolean typeIsSubmmittedSccess() {
+        return this == SUBMITTED_SUCCESS;
+    }
+
     /**
      * status is failure
      *
@@ -121,6 +125,10 @@ public enum ExecutionStatus {
         return this == PAUSE;
     }
 
+    public boolean typeIsReadyPause() {
+        return this == READY_PAUSE;
+    }
+
     /**
      * status is pause
      *
@@ -128,6 +136,10 @@ public enum ExecutionStatus {
      */
     public boolean typeIsStop() {
         return this == STOP;
+    }
+
+    public boolean typeIsReadyStop() {
+        return this == READY_STOP;
     }
 
     /**

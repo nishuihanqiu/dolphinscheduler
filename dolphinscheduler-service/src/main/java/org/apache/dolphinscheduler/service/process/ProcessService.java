@@ -29,17 +29,11 @@ import static org.apache.dolphinscheduler.common.Constants.LOCAL_PARAMS;
 
 import static java.util.stream.Collectors.toSet;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.apache.dolphinscheduler.common.Constants;
-import org.apache.dolphinscheduler.common.enums.AuthorizationType;
-import org.apache.dolphinscheduler.common.enums.CommandType;
-import org.apache.dolphinscheduler.common.enums.Direct;
-import org.apache.dolphinscheduler.common.enums.ExecutionStatus;
-import org.apache.dolphinscheduler.common.enums.FailureStrategy;
-import org.apache.dolphinscheduler.common.enums.Flag;
-import org.apache.dolphinscheduler.common.enums.ReleaseState;
-import org.apache.dolphinscheduler.common.enums.TaskDependType;
-import org.apache.dolphinscheduler.common.enums.TimeoutFlag;
-import org.apache.dolphinscheduler.common.enums.WarningType;
+import org.apache.dolphinscheduler.common.enums.*;
 import org.apache.dolphinscheduler.common.graph.DAG;
 import org.apache.dolphinscheduler.common.model.DateInterval;
 import org.apache.dolphinscheduler.common.model.TaskNode;
@@ -56,27 +50,7 @@ import org.apache.dolphinscheduler.common.utils.DateUtils;
 import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.common.utils.ParameterUtils;
 import org.apache.dolphinscheduler.common.utils.TaskParametersUtils;
-import org.apache.dolphinscheduler.dao.entity.Command;
-import org.apache.dolphinscheduler.dao.entity.DagData;
-import org.apache.dolphinscheduler.dao.entity.DataSource;
-import org.apache.dolphinscheduler.dao.entity.Environment;
-import org.apache.dolphinscheduler.dao.entity.ErrorCommand;
-import org.apache.dolphinscheduler.dao.entity.ProcessDefinition;
-import org.apache.dolphinscheduler.dao.entity.ProcessDefinitionLog;
-import org.apache.dolphinscheduler.dao.entity.ProcessInstance;
-import org.apache.dolphinscheduler.dao.entity.ProcessInstanceMap;
-import org.apache.dolphinscheduler.dao.entity.ProcessTaskRelation;
-import org.apache.dolphinscheduler.dao.entity.ProcessTaskRelationLog;
-import org.apache.dolphinscheduler.dao.entity.Project;
-import org.apache.dolphinscheduler.dao.entity.ProjectUser;
-import org.apache.dolphinscheduler.dao.entity.Resource;
-import org.apache.dolphinscheduler.dao.entity.Schedule;
-import org.apache.dolphinscheduler.dao.entity.TaskDefinition;
-import org.apache.dolphinscheduler.dao.entity.TaskDefinitionLog;
-import org.apache.dolphinscheduler.dao.entity.TaskInstance;
-import org.apache.dolphinscheduler.dao.entity.Tenant;
-import org.apache.dolphinscheduler.dao.entity.UdfFunc;
-import org.apache.dolphinscheduler.dao.entity.User;
+import org.apache.dolphinscheduler.dao.entity.*;
 import org.apache.dolphinscheduler.dao.mapper.CommandMapper;
 import org.apache.dolphinscheduler.dao.mapper.DataSourceMapper;
 import org.apache.dolphinscheduler.dao.mapper.EnvironmentMapper;
@@ -161,6 +135,8 @@ public class ProcessService {
 
     @Autowired
     private ProcessInstanceMapMapper processInstanceMapMapper;
+    @Autowired
+    private ProcessInstanceMapLogMapper processInstanceMapLongMapper;
 
     @Autowired
     private TaskInstanceMapper taskInstanceMapper;
@@ -223,6 +199,18 @@ public class ProcessService {
         }
         processInstance.setCommandType(command.getCommandType());
         processInstance.addHistoryCmd(command.getCommandType());
+        processInstance.setWarningType(command.getWarningType());
+//        processInstance.setIsOwnerReceive(command.);
+        if (CommandType.START_PROCESS == command.getCommandType() && 0 != command.getProcessInstanceId()) {
+            processInstance.setId(0);
+            processInstance.setStartTime(new Date());
+            processInstance.setEndTime(new Date());
+            processInstance.setCommandParam(command.getCommandParam());
+            processInstance.setTaskDependType(command.getTaskDependType());
+            processInstance.setFailureStrategy(command.getFailureStrategy());
+            WarningType warningType = command.getWarningType() == null ? WarningType.NONE : command.getWarningType();
+            processInstance.setWarningType(warningType);
+        }
         saveProcessInstance(processInstance);
         this.setSubProcessParam(processInstance);
         this.deleteCommandWithCheck(command.getId());
@@ -378,6 +366,14 @@ public class ProcessService {
             processDefinition = processDefineLogMapper.queryByDefinitionCodeAndVersion(processDefinitionCode, version);
             if (processDefinition != null) {
                 processDefinition.setId(0);
+            }
+        }
+
+        if (processDefinition != null) {
+            int userId = processDefinition.getUserId();
+            if (userId != 0) {
+                User user = userMapper.selectById(userId);
+                processDefinition.setUserName(user.getUserName());
             }
         }
         return processDefinition;
@@ -639,7 +635,7 @@ public class ProcessService {
         return processInstance;
     }
 
-    private void setGlobalParamIfCommanded(ProcessDefinition processDefinition, Map<String, String> cmdParam) {
+    public void setGlobalParamIfCommanded(ProcessDefinition processDefinition, Map<String, String> cmdParam) {
         // get start params from command param
         Map<String, String> startParamMap = new HashMap<>();
         if (cmdParam != null && cmdParam.containsKey(Constants.CMD_PARAM_START_PARAMS)) {
@@ -759,12 +755,15 @@ public class ProcessService {
                 setGlobalParamIfCommanded(processDefinition, cmdParam);
             }
 
-            // Recalculate global parameters after rerun.
-            processInstance.setGlobalParams(ParameterUtils.curingGlobalParams(
-                    processDefinition.getGlobalParamMap(),
-                    processDefinition.getGlobalParamList(),
-                    commandTypeIfComplement,
-                    processInstance.getScheduleTime()));
+            if (commandTypeIfComplement != CommandType.START_FAILURE_TASK_PROCESS
+                    && commandTypeIfComplement != CommandType.REPEAT_RUNNING) {
+                // Recalculate global parameters after rerun.
+                processInstance.setGlobalParams(ParameterUtils.curingGlobalParams(
+                        processDefinition.getGlobalParamMap(),
+                        processDefinition.getGlobalParamList(),
+                        commandTypeIfComplement,
+                        processInstance.getScheduleTime()));
+            }
             processInstance.setProcessDefinition(processDefinition);
         }
         //reset command parameter
@@ -939,7 +938,8 @@ public class ProcessService {
         List<Date> complementDate = CronUtils.getSelfFireDateList(start, end, listSchedules);
 
         if (complementDate.size() > 0
-                && Flag.NO == processInstance.getIsSubProcess()) {
+                && Flag.NO == processInstance.getIsSubProcess()
+                && processInstance.getScheduleTime() == null) {
             processInstance.setScheduleTime(complementDate.get(0));
         }
         processInstance.setGlobalParams(ParameterUtils.curingGlobalParams(
@@ -1067,6 +1067,32 @@ public class ProcessService {
         return task;
     }
 
+    public TaskInstance submitSecondarySubProcess(TaskInstance taskInstance, int commitRetryTimes, int commitInterval) {
+        int retryTimes = 1;
+        boolean submitDB = false;
+        TaskInstance task = null;
+        while (retryTimes <= commitRetryTimes) {
+            try {
+                if (!submitDB) {
+                    // submit task to db
+                    task = submitSecondarySubTask(taskInstance);
+                    if (task != null && task.getId() != 0) {
+                        submitDB = true;
+                        break;
+                    }
+                }
+                if (!submitDB) {
+                    logger.error("task commit to db failed , taskId {} has already retry {} times, please check the database", taskInstance.getId(), retryTimes);
+                }
+                Thread.sleep(commitInterval);
+            } catch (Exception e) {
+                logger.error("task commit to mysql failed", e);
+            }
+            retryTimes += 1;
+        }
+        return task;
+    }
+
     /**
      * submit task to db
      * submit sub process to command
@@ -1088,6 +1114,24 @@ public class ProcessService {
         }
         if (!task.getState().typeIsFinished()) {
             createSubWorkProcess(processInstance, task);
+        }
+
+        logger.info("end submit task to db successfully:{} {} state:{} complete, instance id:{} state: {}  ",
+                taskInstance.getId(), taskInstance.getName(), task.getState(), processInstance.getId(), processInstance.getState());
+        return task;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public TaskInstance submitSecondarySubTask(TaskInstance taskInstance) {
+        ProcessInstance processInstance = this.findProcessInstanceDetailById(taskInstance.getProcessInstanceId());
+        logger.info("start submit task : {}, instance id:{}, state: {}",
+                taskInstance.getName(), taskInstance.getProcessInstanceId(), processInstance.getState());
+        //submit to db
+        TaskInstance task = submitTaskInstanceToDB(taskInstance, processInstance);
+        if (task == null) {
+            logger.error("end submit task to db error, task name:{}, process id:{} state: {} ",
+                    taskInstance.getName(), taskInstance.getProcessInstance(), processInstance.getState());
+            return null;
         }
 
         logger.info("end submit task to db successfully:{} {} state:{} complete, instance id:{} state: {}  ",
@@ -1124,6 +1168,51 @@ public class ProcessService {
         processMap.setParentProcessInstanceId(parentInstance.getId());
         processMap.setParentTaskInstanceId(parentTask.getId());
         createWorkProcessInstanceMap(processMap);
+        return processMap;
+    }
+
+    private ProcessInstanceMap createSecondaryProcessInstanceMap(ProcessInstance parentInstance, TaskInstance parentTask) {
+        ProcessInstanceMap processMap = this.setProcessInstanceMap(parentInstance, parentTask);
+        LambdaQueryWrapper<ProcessInstanceMapLog> wrapper = Wrappers.lambdaQuery();
+        wrapper.eq(ProcessInstanceMapLog::getParentProcessInstanceId, processMap.getParentProcessInstanceId());
+        wrapper.eq(ProcessInstanceMapLog::getParentTaskInstanceId, processMap.getParentTaskInstanceId());
+        wrapper.eq(ProcessInstanceMapLog::getProcessInstanceId, processMap.getProcessInstanceId());
+        wrapper.eq(ProcessInstanceMapLog::getScheduleTime, parentInstance.getScheduleTime());
+        ProcessInstanceMapLog processInstanceMapLog = null;
+        List<ProcessInstanceMapLog> processInstanceMapLogs = processInstanceMapLongMapper.selectList(wrapper);
+        if (CollectionUtils.isNotEmpty(processInstanceMapLogs) && processMap.getProcessInstanceId() != 0) {
+            processInstanceMapLog = processInstanceMapLogs.stream().max((o1, o2) -> {
+                if (o1 == null && o2 == null) {
+                    return 0;
+                }
+                if (o1 == null || o2 == null) {
+                    return o1 == null ? -1 : 1;
+                }
+                if (o1.getId() == o2.getId()) {
+                    return 0;
+                }
+
+                return o1.getId() > o2.getId() ? 1 : -1;
+            }).orElse(null);
+        }
+
+        if (processInstanceMapLog != null &&
+                (parentInstance.getCommandType() == CommandType.RECOVER_SUSPENDED_PROCESS
+                        || parentInstance.getCommandType() == CommandType.START_FAILURE_TASK_PROCESS
+                        || parentInstance.getCommandType() == CommandType.RECOVER_TOLERANCE_FAULT_PROCESS)) {
+            return processMap;
+        }
+
+        if (parentInstance.getCommandType() == CommandType.REPEAT_RUNNING && processInstanceMapLog != null) {
+            processInstanceMapLog.setParentTaskInstanceId(processMap.getParentTaskInstanceId());
+            processInstanceMapLongMapper.updateById(processInstanceMapLog);
+            return processMap;
+        }
+
+        processMap.setProcessInstanceId(0);
+        processInstanceMapMapper.updateById(processMap);
+        this.createWorkProcessInstanceMapLog(processMap,
+                parentInstance.getScheduleTime() != null ? parentInstance.getScheduleTime() : parentInstance.getStartTime());
         return processMap;
     }
 
@@ -1636,6 +1725,10 @@ public class ProcessService {
         return processInstanceMapMapper.updateById(processInstanceMap);
     }
 
+    public int updateWorkProcessInstanceMapLog(ProcessInstanceMapLog processInstanceMap) {
+        return processInstanceMapMapper.updateById(processInstanceMap);
+    }
+
     /**
      * create work process instance map
      *
@@ -1648,6 +1741,25 @@ public class ProcessService {
             return processInstanceMapMapper.insert(processInstanceMap);
         }
         return count;
+    }
+
+    private void createWorkProcessInstanceMapLog(ProcessInstanceMap processInstanceMap, Date scheduleTime) {
+        try {
+            ProcessInstanceMapLog processInstanceMapLog = new ProcessInstanceMapLog(processInstanceMap);
+            processInstanceMapLog.setId(processInstanceMap.getId());
+            processInstanceMapLog.setScheduleTime(scheduleTime);
+            processInstanceMapLongMapper.insert(processInstanceMapLog);
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+        }
+    }
+
+    private int updateWorkProcessInstanceMapLog(ProcessInstanceMapLog processInstanceMap) {
+        LambdaUpdateWrapper<ProcessInstanceMapLog> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(ProcessInstanceMapLog::getParentProcessInstanceId, processInstanceMap.getParentProcessInstanceId());
+        wrapper.eq(ProcessInstanceMapLog::getParentTaskInstanceId, processInstanceMap.getParentTaskInstanceId());
+        wrapper.eq(ProcessInstanceMapLog::getScheduleTime, processInstanceMap.getScheduleTime());
+        return processInstanceMapLongMapper.update(processInstanceMap, wrapper);
     }
 
     /**
@@ -2571,4 +2683,53 @@ public class ProcessService {
             throw new ServiceException("delete command fail, id:" + commandId);
         }
     }
+
+    public Schedule queryByProcessDefinitionCode(long processDefinitionCode) {
+        return scheduleMapper.queryByProcessDefinitionCode(processDefinitionCode);
+    }
+
+    public List<Schedule> queryOnlineScheduleBySubProcessDefinition(ProcessDefinition subProcessDefinition) {
+        List<Schedule> schedules = this.queryOnlineScheduleBySubProcessDefinitionCodes(subProcessDefinition.getProjectCode(),
+                Lists.newArrayList(subProcessDefinition.getCode()));
+        return schedules.stream()
+                .filter(it -> it.getReleaseState() == ReleaseState.ONLINE)
+                .collect(Collectors.toList());
+    }
+
+    public List<Schedule> queryOnlineScheduleBySubProcessDefinitionCodes(long projectCode, List<Long> subProcessDefinitionCodes) {
+        LambdaQueryWrapper<TaskDefinition> wrapper = Wrappers.lambdaQuery();
+        wrapper.eq(TaskDefinition::getProjectCode, projectCode);
+        wrapper.eq(TaskDefinition::getTaskType, TaskType.SUB_PROCESS.getDesc());
+//        wrapper.in(TaskDefinition::getS)
+        return null;
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void createSecondarySubWorkProcess(ProcessInstance parentProcessInstance, TaskInstance taskInstance) {
+        if (!taskInstance.isSubProcess()) {
+            return;
+        }
+
+        ProcessInstanceMap instanceMap = findWorkProcessMapByParent(parentProcessInstance.getId(), taskInstance.getId());
+        if (null != instanceMap && CommandType.RECOVER_TOLERANCE_FAULT_PROCESS == parentProcessInstance.getCommandType()) {
+            return;
+        }
+
+        instanceMap = createSecondaryProcessInstanceMap(parentProcessInstance, taskInstance);
+        ProcessInstance childInstance = null;
+        if (instanceMap.getProcessInstanceId() != 0) {
+            childInstance = findProcessInstanceById(instanceMap.getProcessInstanceId());
+        }
+
+        Command subProcessCommand = createSubProcessCommand(parentProcessInstance, childInstance, instanceMap, taskInstance);
+        updateSubProcessDefinitionByParent(parentProcessInstance, subProcessCommand.getProcessDefinitionCode());
+        initSubInstanceState(childInstance);
+        createCommand(subProcessCommand);
+        logger.info("sub process command created:{}", subProcessCommand);
+    }
+
+    private ProcessInstanceMap createSecondaryProcessInstanceMap(ProcessInstance parentProcessInstance, TaskInstance taskInstance) {
+        return null;
+    }
+
 }

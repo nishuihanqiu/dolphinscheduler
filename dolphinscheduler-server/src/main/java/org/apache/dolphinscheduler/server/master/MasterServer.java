@@ -41,6 +41,7 @@ import org.apache.dolphinscheduler.service.bean.SpringApplicationContext;
 import org.apache.dolphinscheduler.service.quartz.QuartzExecutors;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import org.quartz.SchedulerException;
 import org.slf4j.Logger;
@@ -53,6 +54,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
@@ -183,11 +185,11 @@ public class MasterServer implements IStoppable {
         /**
          * register hooks, which are called before the process exits
          */
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (Stopper.isRunning()) {
-                close("shutdownHook");
-            }
-        }));
+//        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+//            if (Stopper.isRunning()) {
+//                close("shutdownHook");
+//            }
+//        }));
 
     }
 
@@ -229,21 +231,28 @@ public class MasterServer implements IStoppable {
             // close spring Context and will invoke method with @PreDestroy annotation to destory beans. like ServerNodeManager,HostManager,TaskResponseService,CuratorZookeeperClient,etc
             springApplicationContext.close();
             logger.info("springApplicationContext close");
+            try {
+                TimeUnit.SECONDS.sleep(60);
+            } catch (Exception e) {
+                logger.warn("thread ");
+            }
+
+            Runtime.getRuntime().halt(0);
         } catch (Exception e) {
             logger.error("master server stop exception ", e);
-        } finally {
-            try {
-                // thread sleep 60 seconds for quietly stop
-                Thread.sleep(60000L);
-            } catch (Exception e) {
-                logger.warn("thread sleep exception ", e);
-            }
-            System.exit(1);
+            Runtime.getRuntime().halt(1);
         }
     }
 
     @Override
     public void stop(String cause) {
         close(cause);
+    }
+
+    @EventListener
+    public void onContextClosedEvent(ContextClosedEvent ignored) {
+        if (Stopper.isRunning()) {
+            close("shutdownHook");
+        }
     }
 }

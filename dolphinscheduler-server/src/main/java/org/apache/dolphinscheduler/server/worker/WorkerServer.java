@@ -22,10 +22,12 @@ import static org.apache.dolphinscheduler.common.Constants.SPRING_DATASOURCE_DRI
 import org.apache.dolphinscheduler.common.Constants;
 import org.apache.dolphinscheduler.common.IStoppable;
 import org.apache.dolphinscheduler.common.thread.Stopper;
+import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.common.utils.PropertyUtils;
 import org.apache.dolphinscheduler.remote.NettyRemotingServer;
 import org.apache.dolphinscheduler.remote.command.CommandType;
 import org.apache.dolphinscheduler.remote.config.NettyServerConfig;
+import org.apache.dolphinscheduler.server.utils.ProcessUtils;
 import org.apache.dolphinscheduler.server.worker.config.WorkerConfig;
 import org.apache.dolphinscheduler.server.worker.plugin.TaskPluginManager;
 import org.apache.dolphinscheduler.server.worker.processor.DBTaskAckProcessor;
@@ -36,21 +38,30 @@ import org.apache.dolphinscheduler.server.worker.processor.TaskKillAckProcessor;
 import org.apache.dolphinscheduler.server.worker.processor.TaskKillProcessor;
 import org.apache.dolphinscheduler.server.worker.registry.WorkerRegistryClient;
 import org.apache.dolphinscheduler.server.worker.runner.RetryReportTaskStatusThread;
+import org.apache.dolphinscheduler.server.worker.runner.TaskExecuteThread;
 import org.apache.dolphinscheduler.server.worker.runner.WorkerManagerThread;
 import org.apache.dolphinscheduler.service.alert.AlertClientService;
 import org.apache.dolphinscheduler.service.bean.SpringApplicationContext;
 
 import javax.annotation.PostConstruct;
 
+import org.apache.dolphinscheduler.service.queue.entity.TaskExecutionContext;
+import org.apache.dolphinscheduler.spi.task.TaskExecutionContextCacheManager;
+import org.apache.dolphinscheduler.spi.task.request.TaskRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.context.event.ApplicationStartedEvent;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.event.EventListener;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.util.CollectionUtils;
+
+import java.util.Collection;
 
 /**
  * worker server
@@ -128,12 +139,13 @@ public class WorkerServer implements IStoppable {
     /**
      * worker server run
      */
-    @PostConstruct
-    public void run() {
+    private void run() {
         PropertyUtils.setValue(SPRING_DATASOURCE_DRIVER_CLASS_NAME, driverClassName);
 
         // alert-server client registry
         alertClientService = new AlertClientService(workerConfig.getAlertListenHost(), Constants.ALERT_RPC_PORT);
+
+        TaskProcessCleanerUtils.execute();
 
         // init remoting server
         NettyServerConfig serverConfig = new NettyServerConfig();
@@ -194,27 +206,72 @@ public class WorkerServer implements IStoppable {
                 logger.warn("thread sleep exception", e);
             }
 
+            // kill running tasks
+            this.killAllRunningTasks();
             // close
             this.nettyRemotingServer.close();
             this.workerRegistryClient.unRegistry();
             this.alertClientService.close();
             this.springApplicationContext.close();
             logger.info("springApplicationContext close");
-        } catch (Exception e) {
-            logger.error("worker server stop exception ", e);
-        } finally {
+
             try {
                 // thread sleep 60 seconds for quietly stop
                 Thread.sleep(60000L);
             } catch (Exception e) {
                 logger.warn("thread sleep exception ", e);
             }
-            System.exit(1);
+            Runtime.getRuntime().halt(0);
+
+        } catch (Exception e) {
+            logger.error("worker server stop exception ", e);
+            Runtime.getRuntime().halt(1);
         }
     }
 
     @Override
     public void stop(String cause) {
         close(cause);
+    }
+
+    private void killAllRunningTasks() {
+        Collection<TaskRequest> taskRequests = TaskExecutionContextCacheManager.getAllTaskRequests();
+        if (CollectionUtils.isEmpty(taskRequests)) {
+            return;
+        }
+
+        taskRequests.forEach(this::killRunningTask);
+    }
+
+    private void killRunningTask(TaskRequest taskRequest) {
+        if (taskRequest == null) {
+            return;
+        }
+
+        try {
+            int taskInstanceId = taskRequest.getTaskInstanceId();
+            TaskExecuteThread taskExecuteThread = workerManagerThread.getTaskExecuteThread(taskInstanceId);
+            if (taskExecuteThread != null && taskExecuteThread.getTask() != null) {
+                taskExecuteThread.close();
+            } else {
+                TaskExecutionContext ctx = JSONUtils.parseObject(JSONUtils.toJsonString(taskRequest), TaskExecutionContext.class);
+                ProcessUtils.killYarnJob(ctx);
+                org.apache.dolphinscheduler.plugin.task.api.ProcessUtils.kill(taskRequest);
+            }
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+        }
+    }
+
+    @EventListener
+    public void onStarted(ApplicationStartedEvent event) {
+        this.run();
+    }
+
+    @EventListener
+    public void onClosed(ApplicationStartedEvent event) {
+        if (Stopper.isRunning()) {
+            close("shutdownHook");
+        }
     }
 }

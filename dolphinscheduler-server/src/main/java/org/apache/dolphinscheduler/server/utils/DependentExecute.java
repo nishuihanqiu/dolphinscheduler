@@ -273,6 +273,23 @@ public class DependentExecute {
         return modelDependResult;
     }
 
+    public List<DependentItem> getModelDependentLogging(Date currentTime) {
+        List<DependentItem> loggingItems = new ArrayList<>();
+        for (DependentItem dependentItem : dependItemList) {
+            DependResult dependResult = getDependentResultForItem(dependentItem, currentTime);
+            DependentItem loggingItem = new DependentItem();
+            loggingItem.setDefinitionCode(dependentItem.getDefinitionCode());
+            loggingItem.setProjectCode(dependentItem.getProjectCode());
+            loggingItem.setDepTaskCode(dependentItem.getDepTaskCode());
+            loggingItem.setDateValue(dependentItem.getDateValue());
+            loggingItem.setCycle(dependentItem.getCycle());
+            loggingItem.setStatus(dependentItem.getStatus());
+            loggingItem.setDependResult(dependResult);
+            loggingItems.add(loggingItem);
+        }
+        return loggingItems;
+    }
+
     /**
      * get dependent item result
      *
@@ -290,6 +307,10 @@ public class DependentExecute {
 
     public Map<String, DependResult> getDependResultMap() {
         return dependResultMap;
+    }
+
+    public DependentRelation getRelation() {
+        return relation;
     }
 
 }

@@ -30,7 +30,9 @@ import org.apache.dolphinscheduler.service.process.ProcessService;
 
 import org.apache.hadoop.util.ThreadUtil;
 
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +50,8 @@ public class StateWheelExecuteThread extends Thread {
     private ConcurrentHashMap<Integer, TaskInstance> taskInstanceTimeoutCheckList;
     private ConcurrentHashMap<Integer, TaskInstance> taskInstanceRetryCheckList;
     private ConcurrentHashMap<Integer, WorkflowExecuteThread> processInstanceExecMaps;
+
+    private ConcurrentHashMap<Integer, TaskInstance> taskInstanceForceSuccessCheckList;
 
     /**
      * start process failed map
@@ -68,6 +72,7 @@ public class StateWheelExecuteThread extends Thread {
             ConcurrentHashMap<Integer, ProcessInstance> processInstanceTimeoutCheckList,
             ConcurrentHashMap<Integer, TaskInstance> taskInstanceTimeoutCheckList,
             ConcurrentHashMap<Integer, TaskInstance> taskInstanceRetryCheckList,
+            ConcurrentHashMap<Integer, TaskInstance> taskInstanceForceSuccessCheckList,
             ConcurrentHashMap<Integer, WorkflowExecuteThread> processInstanceExecMaps,
             int stateCheckIntervalSecs) {
         this.masterExecService = masterExecService;
@@ -76,6 +81,7 @@ public class StateWheelExecuteThread extends Thread {
         this.processInstanceTimeoutCheckList = processInstanceTimeoutCheckList;
         this.taskInstanceTimeoutCheckList = taskInstanceTimeoutCheckList;
         this.taskInstanceRetryCheckList = taskInstanceRetryCheckList;
+        this.taskInstanceForceSuccessCheckList = taskInstanceForceSuccessCheckList;
         this.processInstanceExecMaps = processInstanceExecMaps;
         this.stateCheckIntervalSecs = stateCheckIntervalSecs;
     }
@@ -90,6 +96,8 @@ public class StateWheelExecuteThread extends Thread {
                 checkTask4Timeout();
                 checkTask4Retry();
                 checkProcess4Timeout();
+                checkProcess4TReadyStop();
+                checkTaskInstanceForceSuccess();
             } catch (Exception e) {
                 logger.error("state wheel thread check error:", e);
             }
@@ -134,10 +142,18 @@ public class StateWheelExecuteThread extends Thread {
         }
 
         for (TaskInstance taskInstance : this.taskInstanceRetryCheckList.values()) {
-            if (!taskInstance.getState().typeIsFinished() && (taskInstance.isSubProcess() || taskInstance.isDependTask())) {
+            if (!taskInstance.getState().typeIsFinished() && taskInstance.isSubProcess()) {
                 addTaskStateChangeEvent(taskInstance);
+                taskInstanceRetryCheckList.remove(taskInstance.getId());
+            } else if (!taskInstance.getState().typeIsFinished() && taskInstance.isDependTask()) {
+                addTaskStateChangeEvent(taskInstance);
+                taskInstanceRetryCheckList.remove(taskInstance.getId());
             } else if (taskInstance.taskCanRetry() && taskInstance.retryTaskIntervalOverTime()) {
                 addTaskStateChangeEvent(taskInstance);
+                taskInstanceRetryCheckList.remove(taskInstance.getId());
+            } else if (taskInstance.getState().typeIsFinished() && !taskInstance.getState().typeIsFailure()) {
+                taskInstanceRetryCheckList.remove(taskInstance.getId());
+            } else if (taskInstance.getState().typeIsFailure() && !taskInstance.taskCanRetry()) {
                 taskInstanceRetryCheckList.remove(taskInstance.getId());
             }
         }
@@ -153,6 +169,47 @@ public class StateWheelExecuteThread extends Thread {
             if (timeRemain < 0) {
                 addProcessTimeoutEvent(processInstance);
                 processInstanceTimeoutCheckList.remove(processInstance.getId());
+            }
+        }
+    }
+
+    private void checkProcess4TReadyStop() {
+        if (this.processInstanceExecMaps.isEmpty()) {
+            return;
+        }
+
+        List<ProcessInstance> processInstances = this.processInstanceExecMaps.values()
+                .stream()
+                .map(WorkflowExecuteThread::getProcessInstance)
+                .filter(processInstance -> processInstance.getState().typeIsRunning())
+                .collect(Collectors.toList());
+        if (processInstances.isEmpty()) {
+            return;
+        }
+        for (ProcessInstance processInstance : processInstances) {
+            ProcessInstance instance = processService.findProcessInstanceById(processInstance.getId());
+            if (processInstance.getState() != instance.getState() &&
+                    (instance.getState() == ExecutionStatus.READY_STOP
+                            || instance.getState() == ExecutionStatus.READY_PAUSE)) {
+                this.addProcessReadyStopEvent(instance);
+            }
+        }
+    }
+
+    private void checkTaskInstanceForceSuccess() {
+        if (this.taskInstanceForceSuccessCheckList.isEmpty()) {
+            return;
+        }
+        for (TaskInstance taskInstance : taskInstanceForceSuccessCheckList.values()) {
+            WorkflowExecuteThread workflowExecuteThread = processInstanceExecMaps.get(taskInstance.getProcessInstanceId());
+            if (workflowExecuteThread == null || !taskInstance.getState().typeIsFailure() || taskInstance.isConditionsTask()) {
+                taskInstanceForceSuccessCheckList.remove(taskInstance.getId());
+                continue;
+            }
+            TaskInstance task = processService.findTaskInstanceById(taskInstance.getId());
+            if (task.getState() == ExecutionStatus.FORCED_SUCCESS) {
+                this.addTaskInstanceForceSuccessEvent(task);
+                taskInstanceForceSuccessCheckList.remove(taskInstance.getId());
             }
         }
     }
@@ -184,12 +241,33 @@ public class StateWheelExecuteThread extends Thread {
         return true;
     }
 
+    private boolean addProcessReadyStopEvent(ProcessInstance processInstance) {
+        StateEvent stateEvent = new StateEvent();
+        stateEvent.setType(StateEventType.PROCESS_STATE_CHANGE);
+        stateEvent.setExecutionStatus(processInstance.getState());
+        stateEvent.setProcessInstanceId(processInstance.getId());
+        addEvent(stateEvent);
+        return true;
+    }
+
+    private boolean addTaskInstanceForceSuccessEvent(TaskInstance taskInstance) {
+        StateEvent stateEvent = new StateEvent();
+        stateEvent.setType(StateEventType.TASK_STATE_CHANGE);
+        stateEvent.setExecutionStatus(ExecutionStatus.FORCED_SUCCESS);
+        stateEvent.setTaskInstanceId(taskInstance.getId());
+        stateEvent.setProcessInstanceId(taskInstance.getProcessInstanceId());
+        addEvent(stateEvent);
+        return true;
+    }
+
     private void addEvent(StateEvent stateEvent) {
         if (!processInstanceExecMaps.containsKey(stateEvent.getProcessInstanceId())) {
             return;
         }
         WorkflowExecuteThread workflowExecuteThread = this.processInstanceExecMaps.get(stateEvent.getProcessInstanceId());
-        workflowExecuteThread.addStateEvent(stateEvent);
+        if (workflowExecuteThread != null) {
+            workflowExecuteThread.addStateEvent(stateEvent);
+        }
     }
 
     private void check4StartProcessFailed() {

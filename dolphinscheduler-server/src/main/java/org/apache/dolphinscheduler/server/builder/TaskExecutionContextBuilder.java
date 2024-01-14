@@ -65,7 +65,8 @@ public class TaskExecutionContextBuilder {
         return this;
     }
 
-    public TaskExecutionContextBuilder buildTaskDefinitionRelatedInfo(TaskDefinition taskDefinition) {
+    public TaskExecutionContextBuilder buildTaskDefinitionRelatedInfo(TaskInstance taskInstance) {
+        TaskDefinition taskDefinition = taskInstance.getTaskDefine();
         taskExecutionContext.setTaskTimeout(Integer.MAX_VALUE);
         if (taskDefinition.getTimeoutFlag() == TimeoutFlag.OPEN) {
             taskExecutionContext.setTaskTimeoutStrategy(taskDefinition.getTimeoutNotifyStrategy());
@@ -74,7 +75,7 @@ public class TaskExecutionContextBuilder {
                 taskExecutionContext.setTaskTimeout(Math.min(taskDefinition.getTimeout() * SEC_2_MINUTES_TIME_UNIT, Integer.MAX_VALUE));
             }
         }
-        taskExecutionContext.setTaskParams(taskDefinition.getTaskParams());
+        taskExecutionContext.setTaskParams(taskInstance.getTaskParams());
         return this;
     }
 

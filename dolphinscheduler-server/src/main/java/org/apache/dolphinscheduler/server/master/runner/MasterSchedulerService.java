@@ -33,6 +33,7 @@ import org.apache.dolphinscheduler.server.master.dispatch.executor.NettyExecutor
 import org.apache.dolphinscheduler.server.master.processor.queue.TaskResponseService;
 import org.apache.dolphinscheduler.server.master.registry.MasterRegistryClient;
 import org.apache.dolphinscheduler.server.master.registry.ServerNodeManager;
+import org.apache.dolphinscheduler.server.master.watcher.WorkflowWatcher;
 import org.apache.dolphinscheduler.service.alert.ProcessAlertManager;
 import org.apache.dolphinscheduler.service.process.ProcessService;
 
@@ -125,7 +126,14 @@ public class MasterSchedulerService extends Thread {
      */
     ConcurrentHashMap<Integer, TaskInstance> taskRetryCheckList = new ConcurrentHashMap<>();
 
+    /**
+     * task force success check list
+     */
+    ConcurrentHashMap<Integer, TaskInstance> taskInstanceForceSuccessCheckList = new ConcurrentHashMap<>();
+
     private StateWheelExecuteThread stateWheelExecuteThread;
+
+    private WorkflowWatcher workflowWatcher;
 
     /**
      * constructor of MasterSchedulerService
@@ -144,8 +152,17 @@ public class MasterSchedulerService extends Thread {
                 processTimeoutCheckList,
                 taskTimeoutCheckList,
                 taskRetryCheckList,
+                taskInstanceForceSuccessCheckList,
                 this.processInstanceExecMaps,
                 masterConfig.getStateWheelInterval() * Constants.SLEEP_TIME_MILLIS);
+
+        workflowWatcher = new WorkflowWatcher(
+                processService,
+                masterRegistryClient,
+                taskRetryCheckList,
+                processInstanceExecMaps,
+                masterConfig.getStateWheelInterval() * Constants.SLEEP_TIME_MILLIS
+        );
     }
 
     @Override
@@ -153,6 +170,7 @@ public class MasterSchedulerService extends Thread {
         super.setName("MasterSchedulerService");
         super.start();
         this.stateWheelExecuteThread.start();
+        this.workflowWatcher.start();
     }
 
     public void close() {
@@ -201,7 +219,24 @@ public class MasterSchedulerService extends Thread {
         if (command != null) {
             logger.info("find one command: id: {}, type: {}", command.getId(), command.getCommandType());
             try {
-                ProcessInstance processInstance = processService.handleCommand(logger, getLocalAddress(), command);
+                ProcessInstance processInstance;
+                for (int i = 0; true; i++) {
+                    try {
+                        processInstance = processService.handleCommand(logger, getLocalAddress(), command);
+                        break;
+                    } catch (Exception e) {
+                        logger.error("handle command error,", e);
+                        String title = "handle command error: " + e.getMessage();
+                        String content = "handle command error: " + e.getMessage();
+                        if (i == 3) {
+                            logger.info("handle command error");
+                            throw e;
+                        }
+
+                        logger.info("retry cnt :{}", i + 1);
+                    }
+                }
+
 
                 if (processInstance != null) {
                     WorkflowExecuteThread workflowExecuteThread = new WorkflowExecuteThread(
@@ -212,7 +247,8 @@ public class MasterSchedulerService extends Thread {
                             , processAlertManager
                             , masterConfig
                             , taskTimeoutCheckList
-                            , taskRetryCheckList);
+                            , taskRetryCheckList
+                            , taskInstanceForceSuccessCheckList);
 
                     this.processInstanceExecMaps.put(processInstance.getId(), workflowExecuteThread);
                     if (processInstance.getTimeout() > 0) {

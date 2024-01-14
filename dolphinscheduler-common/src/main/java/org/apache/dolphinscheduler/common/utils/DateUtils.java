@@ -173,6 +173,10 @@ public final class DateUtils {
         return Math.abs(d1.getTime() - d2.getTime());
     }
 
+    public static long differMs(long d1, long d2) {
+        return Math.abs(d1 - d2);
+    }
+
     /**
      * get the date of the specified date in the days before and after
      *

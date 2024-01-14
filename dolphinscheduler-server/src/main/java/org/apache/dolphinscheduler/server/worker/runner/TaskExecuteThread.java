@@ -29,14 +29,19 @@ import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.common.utils.LoggerUtils;
 import org.apache.dolphinscheduler.common.utils.OSUtils;
 import org.apache.dolphinscheduler.common.utils.RetryerUtils;
+import org.apache.dolphinscheduler.dao.mapper.ProcessInstanceMapper;
+import org.apache.dolphinscheduler.dao.mapper.TaskInstanceMapper;
+import org.apache.dolphinscheduler.dao.mapper.WorkerGroupMapper;
 import org.apache.dolphinscheduler.remote.command.Command;
 import org.apache.dolphinscheduler.remote.command.TaskExecuteAckCommand;
 import org.apache.dolphinscheduler.remote.command.TaskExecuteResponseCommand;
 import org.apache.dolphinscheduler.server.utils.ProcessUtils;
 import org.apache.dolphinscheduler.server.worker.cache.ResponceCache;
+import org.apache.dolphinscheduler.server.worker.config.WorkerConfig;
 import org.apache.dolphinscheduler.server.worker.plugin.TaskPluginManager;
 import org.apache.dolphinscheduler.server.worker.processor.TaskCallbackService;
 import org.apache.dolphinscheduler.service.alert.AlertClientService;
+import org.apache.dolphinscheduler.service.bean.SpringApplicationContext;
 import org.apache.dolphinscheduler.service.queue.entity.TaskExecutionContext;
 import org.apache.dolphinscheduler.spi.task.AbstractTask;
 import org.apache.dolphinscheduler.spi.task.TaskAlertInfo;
@@ -60,6 +65,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import org.h2.util.Task;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,12 +96,19 @@ public class TaskExecuteThread implements Runnable, Delayed {
      */
     private TaskCallbackService taskCallbackService;
 
+    private WorkerConfig workerConfig;
+
+    private ProcessInstanceMapper processInstanceMapper;
     /**
      * alert client server
      */
     private AlertClientService alertClientService;
 
     private TaskPluginManager taskPluginManager;
+
+    private WorkerGroupMapper workerGroupMapper;
+
+    private TaskInstanceMapper taskInstanceMapper;
 
     /**
      * constructor
@@ -106,6 +119,9 @@ public class TaskExecuteThread implements Runnable, Delayed {
     public TaskExecuteThread(TaskExecutionContext taskExecutionContext,
                              TaskCallbackService taskCallbackService,
                              AlertClientService alertClientService) {
+        this.workerConfig = SpringApplicationContext.getBean(WorkerConfig.class);
+        this.processInstanceMapper = SpringApplicationContext.getBean(ProcessInstanceMapper.class);
+        this.taskInstanceMapper = SpringApplicationContext.getBean(TaskInstanceMapper.class);
         this.taskExecutionContext = taskExecutionContext;
         this.taskCallbackService = taskCallbackService;
         this.alertClientService = alertClientService;
@@ -114,11 +130,16 @@ public class TaskExecuteThread implements Runnable, Delayed {
     public TaskExecuteThread(TaskExecutionContext taskExecutionContext,
                              TaskCallbackService taskCallbackService,
                              AlertClientService alertClientService,
-                             TaskPluginManager taskPluginManager) {
+                             TaskPluginManager taskPluginManager,
+                             WorkerGroupMapper workerGroupMapper) {
+        this.workerConfig = SpringApplicationContext.getBean(WorkerConfig.class);
+        this.processInstanceMapper = SpringApplicationContext.getBean(ProcessInstanceMapper.class);
+        this.taskInstanceMapper = SpringApplicationContext.getBean(TaskInstanceMapper.class);
         this.taskExecutionContext = taskExecutionContext;
         this.taskCallbackService = taskCallbackService;
         this.alertClientService = alertClientService;
         this.taskPluginManager = taskPluginManager;
+        this.workerGroupMapper = workerGroupMapper;
     }
 
     @Override
@@ -392,5 +413,18 @@ public class TaskExecuteThread implements Runnable, Delayed {
 
     public AbstractTask getTask() {
         return task;
+    }
+
+    public void close() {
+        if (task == null) {
+            return;
+        }
+
+        try {
+            task.close();
+            ProcessUtils.killYarnJob(taskExecutionContext, task.getLogger());
+        } catch (Exception e) {
+            logger.error(e.getMessage(), e);
+        }
     }
 }
