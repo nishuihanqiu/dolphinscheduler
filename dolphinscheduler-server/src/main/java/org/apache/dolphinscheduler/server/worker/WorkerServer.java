@@ -235,7 +235,7 @@ public class WorkerServer implements IStoppable {
     }
 
     private void killAllRunningTasks() {
-        Collection<TaskRequest> taskRequests = TaskExecutionContextCacheManager.getAllTaskRequests();
+        Collection<TaskRequest> taskRequests = TaskExecutionContgitextCacheManager.getAllTaskRequests();
         if (CollectionUtils.isEmpty(taskRequests)) {
             return;
         }
